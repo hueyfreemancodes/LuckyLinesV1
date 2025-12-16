@@ -1,0 +1,25 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+alembic
+psycopg2-binary
+pydantic-settings
+python-dotenv
+requests
+httpx
+# Data/ML Core
+numpy
+pandas
+scipy
+scikit-learn
+xgboost
+lightgbm
+catboost
+# Ingestion
+beautifulsoup4
+nfl-data-py
+nba_api
+python-multipart
+# Async/Tasks (if used)
+redis
+celery
