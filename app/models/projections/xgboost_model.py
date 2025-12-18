@@ -27,60 +27,44 @@ class XGBoostModel(BaseProjectionModel):
         df = data.copy()
         
         # 1. Advanced Features (if team stats available)
+        # 1. Advanced Features
         if team_stats is not None:
-            df = FeatureEngineering.calculate_team_shares(df, team_stats)
-            df = FeatureEngineering.calculate_red_zone_share(df, team_stats)
-            df = FeatureEngineering.calculate_opportunity_share(df, team_stats)
+            df = FeatureEngineering.add_team_shares(df, team_stats)
+            df = FeatureEngineering.add_rz_share(df, team_stats)
+            df = FeatureEngineering.add_opp_share(df, team_stats)
             
-        # 2. Time Series Features
-        # 2. Time Series Features
-        # EMAs
+        # 2. Time Series
         ema_cols = ['fantasy_points_ppr', 'targets', 'rush_attempts', 'red_zone_share', 'opportunity_share']
-        
-        # Add target column to EMAs if not already present
         if self.target_col not in ema_cols and self.target_col in df.columns:
             ema_cols.append(self.target_col)
             
-        df = FeatureEngineering.calculate_exponential_moving_averages(df, span=4, columns=ema_cols)
+        df = FeatureEngineering.add_emas(df, span=4, cols=ema_cols)
         
-        # Lags
         lag_cols = ['fantasy_points_ppr', 'targets', 'rush_attempts']
-        
-        # Add target column to Lags if not already present
         if self.target_col not in lag_cols and self.target_col in df.columns:
             lag_cols.append(self.target_col)
             
-        df = FeatureEngineering.calculate_lag_features(df, lags=[1], columns=lag_cols)
+        df = FeatureEngineering.add_lags(df, lags=[1], cols=lag_cols)
         
-        # Streaks & Velocity
-        df = FeatureEngineering.calculate_streak_coefficient(df)
-        df = FeatureEngineering.calculate_velocity(df)
-        df = FeatureEngineering.calculate_consecutive_streaks(df)
+        df = FeatureEngineering.calc_streak(df)
+        df = FeatureEngineering.calc_velocity(df)
+        df = FeatureEngineering.add_streaks(df)
         
-        # 3. Implied Totals (if available)
-        df = FeatureEngineering.calculate_implied_totals(df)
+        # 3. Implied Totals
+        df = FeatureEngineering.add_vegas_implied(df)
         
-        # 4. Weather Features
-        # Requires: 'forecast_wind_speed', 'forecast_temp_low', 'forecast_humidity'
-        # Also needs 'passing_yards_ema_4' for interaction, so calculate EMAs first (done above)
-        # We need to ensure passing_yards EMA is calculated
+        # 4. Weather
+        # Ensure interaction EMA exists
         if 'passing_yards' in df.columns and 'passing_yards_ema_4' not in df.columns:
-             df = FeatureEngineering.calculate_exponential_moving_averages(df, span=4, columns=['passing_yards'])
-
-        df = FeatureEngineering.calculate_weather_features(df)
+             df = FeatureEngineering.add_emas(df, span=4, cols=['passing_yards'])
+             
+        df = FeatureEngineering.add_weather_impact(df)
         
-        # 5. Fantasy Context Features
-        # Requires: 'vorp_last_season', 'ppg_last_season'
-        df = FeatureEngineering.calculate_fantasy_context_features(df)
-        
-        # 6. Opponent Defense Features
-        df = FeatureEngineering.calculate_opponent_defense_features(df)
-        
-        # 7. Game Script Features (Spread Interaction)
-        df = FeatureEngineering.calculate_game_script_features(df)
-        
-        # 8. Expected Fantasy Points (xFP)
-        df = FeatureEngineering.calculate_expected_fantasy_points(df)
+        # 5. Context & Defense
+        df = FeatureEngineering.add_fantasy_context(df)
+        df = FeatureEngineering.add_def_features(df)
+        df = FeatureEngineering.add_game_script_features(df)
+        df = FeatureEngineering.add_xfp(df)
         
         # 9. Define Feature List
         feature_cols = [

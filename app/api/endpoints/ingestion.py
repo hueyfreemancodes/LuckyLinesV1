@@ -22,7 +22,7 @@ async def ingest_salaries(
     try:
         content = await file.read()
         ingestion = CSVIngestion(db)
-        count = await ingestion.process_salary_csv(content, platform, season, week)
+        count = ingestion.process_salary_csv(content, platform, season, week)
         return {"message": f"Successfully processed {count} salary records for {platform} Week {week}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -48,24 +48,24 @@ async def ingest_csv(
         
         if type == "history":
             if dataset_type == "player_offense":
-                count = await ingestion.process_player_stats_offense(content)
+                count = ingestion.process_player_stats_offense(content)
                 return {"message": f"Successfully processed {count} player offensive records"}
             elif dataset_type == "player_defense":
-                count = await ingestion.process_player_stats_defense(content)
+                count = ingestion.process_player_stats_defense(content)
                 return {"message": f"Successfully processed {count} player defensive records"}
             elif dataset_type == "team_offense":
-                count = await ingestion.process_team_stats_offense(content)
+                count = ingestion.process_team_stats_offense(content)
                 return {"message": f"Successfully processed {count} team offensive records"}
             elif dataset_type == "team_defense":
-                count = await ingestion.process_team_stats_defense(content)
+                count = ingestion.process_team_stats_defense(content)
                 return {"message": f"Successfully processed {count} team defensive records"}
             elif dataset_type == "play_by_play":
-                count = await ingestion.process_play_by_play(content)
+                count = ingestion.process_play_by_play(content)
                 return {"message": f"Successfully processed {count} play-by-play records"}
             else:
                 return {"message": f"Dataset type {dataset_type} not yet implemented"}
         else:
-            count = await ingestion.process_csv(content, sport, source)
+            count = ingestion.process_csv(content, sport, source)
             return {"message": f"Successfully processed {count} projections from {file.filename}"}
         
     except Exception as e:

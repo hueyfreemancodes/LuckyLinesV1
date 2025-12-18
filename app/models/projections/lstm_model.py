@@ -33,36 +33,24 @@ class LSTMModel(BaseProjectionModel):
         
         # 1. Advanced Features (if team stats available)
         if team_stats is not None:
-            df = FeatureEngineering.calculate_team_shares(df, team_stats)
-            df = FeatureEngineering.calculate_red_zone_share(df, team_stats)
-            df = FeatureEngineering.calculate_opportunity_share(df, team_stats)
+            df = FeatureEngineering.add_team_shares(df, team_stats)
+            df = FeatureEngineering.add_rz_share(df, team_stats)
+            df = FeatureEngineering.add_opp_share(df, team_stats)
             
-        # 2. Time Series Features
-        # EMAs
-        ema_cols = ['fantasy_points_ppr', 'targets', 'rush_attempts', 'red_zone_share', 'opportunity_share']
-        df = FeatureEngineering.calculate_exponential_moving_averages(df, span=4, columns=ema_cols)
+        cols_ema = ['fantasy_points_ppr', 'targets', 'rush_attempts', 'red_zone_share', 'opportunity_share']
+        df = FeatureEngineering.add_emas(df, span=4, cols=cols_ema)
         
-        # Lags
-        lag_cols = ['fantasy_points_ppr', 'targets', 'rush_attempts']
-        df = FeatureEngineering.calculate_lag_features(df, lags=[1], columns=lag_cols)
+        cols_lag = ['fantasy_points_ppr', 'targets', 'rush_attempts']
+        df = FeatureEngineering.add_lags(df, lags=[1], cols=cols_lag)
         
-        # Streaks & Velocity
-        df = FeatureEngineering.calculate_streak_coefficient(df)
-        df = FeatureEngineering.calculate_velocity(df)
-        df = FeatureEngineering.calculate_consecutive_streaks(df)
+        df = FeatureEngineering.calc_streak(df)
+        df = FeatureEngineering.calc_velocity(df)
+        df = FeatureEngineering.add_streaks(df)
         
-        # 3. Implied Totals (if available)
-        df = FeatureEngineering.calculate_implied_totals(df)
-        
-        # 5. Fantasy Context Features
-        # Requires: 'vorp_last_season', 'ppg_last_season'
-        df = FeatureEngineering.calculate_fantasy_context_features(df)
-        
-        # 6. Opponent Defense Features
-        df = FeatureEngineering.calculate_opponent_defense_features(df)
-        
-        # 7. Expected Fantasy Points (xFP)
-        df = FeatureEngineering.calculate_expected_fantasy_points(df)
+        df = FeatureEngineering.add_vegas_implied(df)
+        df = FeatureEngineering.add_fantasy_context(df)
+        df = FeatureEngineering.add_def_features(df)
+        df = FeatureEngineering.add_xfp(df)
         
         # 8. Define Feature List
         feature_cols = [

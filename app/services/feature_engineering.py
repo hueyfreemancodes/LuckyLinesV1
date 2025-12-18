@@ -8,409 +8,220 @@ class FeatureEngineering:
     """
     Service for generating advanced features for NFL projections.
     """
-    
-    @staticmethod
-    def calculate_exponential_moving_averages(df: pd.DataFrame, span: int = 4, columns: list = None) -> pd.DataFrame:
-        """
-        Calculates Exponential Moving Averages (EMA) for specified columns grouped by player.
-        """
-        if columns is None:
-            return df
-            
-        # Ensure data is sorted by date/week
-        df = df.sort_values(by=['player_id', 'season', 'week'])
-        
-        for col in columns:
-            if col in df.columns:
-                # Group by player and apply EMA
-                # shift(1) because we want the average *entering* the game, not including the game itself
-                df[f'{col}_ema_{span}'] = df.groupby('player_id')[col].transform(
-                    lambda x: x.ewm(span=span, adjust=False).mean().shift(1)
-                ).fillna(0)
-                
-        return df
 
     @staticmethod
-    def calculate_lag_features(df: pd.DataFrame, lags: list = [1], columns: list = None) -> pd.DataFrame:
-        """
-        Creates lag features (e.g., points_last_week).
-        """
-        if columns is None:
-            return df
-            
-        df = df.sort_values(by=['player_id', 'season', 'week'])
+    def _group_shift(df, col, span=None, lag=None):
+        """Helper to apply EWM or Shift by player."""
+        grouped = df.groupby('player_id')[col]
+        if span:
+            # Shift 1 to use entering stats
+            return grouped.transform(lambda x: x.ewm(span=span, adjust=False).mean().shift(1))
+        if lag:
+            return grouped.shift(lag)
+        return None
+
+    @classmethod
+    def add_emas(cls, df: pd.DataFrame, span: int = 4, cols: list = None) -> pd.DataFrame:
+        if not cols: return df
+        df = df.sort_values(['player_id', 'season', 'week'])
         
-        for col in columns:
+        for col in [c for c in cols if c in df.columns]:
+            df[f'{col}_ema_{span}'] = cls._group_shift(df, col, span=span).fillna(0)
+        return df
+
+    @classmethod
+    def add_lags(cls, df: pd.DataFrame, lags: list = [1], cols: list = None) -> pd.DataFrame:
+        if not cols: return df
+        df = df.sort_values(['player_id', 'season', 'week'])
+
+        for col in cols:
             for lag in lags:
-                df[f'{col}_lag_{lag}'] = df.groupby('player_id')[col].shift(lag).fillna(0)
-                
+                df[f'{col}_lag_{lag}'] = cls._group_shift(df, col, lag=lag).fillna(0)
         return df
 
-    @staticmethod
-    def calculate_streak_coefficient(df: pd.DataFrame, metric: str = 'fantasy_points_ppr', short_span: int = 3, long_span: int = 8) -> pd.DataFrame:
-        """
-        Calculates a 'streak coefficient' by comparing short-term EMA to long-term EMA.
-        Ratio > 1.0 implies 'hot', < 1.0 implies 'cold'.
-        """
-        df = df.sort_values(by=['player_id', 'season', 'week'])
+    @classmethod
+    def calc_streak(cls, df: pd.DataFrame, metric='fantasy_points_ppr', short=3, long=8) -> pd.DataFrame:
+        """Ratio of short-term to long-term EMA. >1 = hot."""
+        df = df.sort_values(['player_id', 'season', 'week'])
         
-        # Calculate EMAs (shifted to be predictive)
-        short_ema = df.groupby('player_id')[metric].transform(
-            lambda x: x.ewm(span=short_span, adjust=False).mean().shift(1)
-        )
-        long_ema = df.groupby('player_id')[metric].transform(
-            lambda x: x.ewm(span=long_span, adjust=False).mean().shift(1)
-        )
+        short_ema = cls._group_shift(df, metric, span=short)
+        long_ema = cls._group_shift(df, metric, span=long)
         
-        # Avoid division by zero
+        # Avoid div/0
         df['streak_coefficient'] = np.where(long_ema > 0, short_ema / long_ema, 1.0)
-        df['streak_coefficient'] = df['streak_coefficient'].fillna(1.0)
+        return df.fillna({'streak_coefficient': 1.0})
+
+    @classmethod
+    def calc_velocity(cls, df: pd.DataFrame, metric='fantasy_points_ppr', short=2, long=8) -> pd.DataFrame:
+        """Delta between short and long term EMA."""
+        df = df.sort_values(['player_id', 'season', 'week'])
+        short_ema = cls._group_shift(df, metric, span=short)
+        long_ema = cls._group_shift(df, metric, span=long)
         
+        df[f'{metric}_velocity'] = (short_ema - long_ema).fillna(0.0)
         return df
 
     @staticmethod
-    def calculate_team_shares(player_df: pd.DataFrame, team_stats_df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Calculates Target Share and Rush Share for each player relative to their team totals.
-        """
-        # Merge player stats with team stats on (team, season, week)
-        # Note: team_stats_df needs to be pre-processed to have matching keys
+    def add_team_shares(df: pd.DataFrame, team_stats: pd.DataFrame) -> pd.DataFrame:
+        """Calculates Target/Rush shares relative to team totals."""
+        cols = ['team_name', 'season', 'week', 'pass_attempts', 'rush_attempts']
+        # Map abbreviations if needed, for now assume clean
         
-        # Ensure join keys match types
-        merged = pd.merge(
-            player_df,
-            team_stats_df[['team_name', 'season', 'week', 'pass_attempts', 'rush_attempts']],
+        merged = df.merge(
+            team_stats[cols],
             left_on=['team', 'season', 'week'],
             right_on=['team_name', 'season', 'week'],
-            how='left',
-            suffixes=('', '_team')
+            how='left', suffixes=('', '_team')
         )
         
-        # Target Share (Targets / Team Pass Attempts)
-        merged['target_share'] = np.where(
-            merged['pass_attempts_team'] > 0,
-            merged['targets'] / merged['pass_attempts_team'],
-            0.0
-        )
-        
-        # Rush Share (Rush Attempts / Team Rush Attempts)
-        merged['rush_share'] = np.where(
-            merged['rush_attempts_team'] > 0,
-            merged['rush_attempts'] / merged['rush_attempts_team'],
-            0.0
-        )
-        
-        # Fill NaNs
-        merged['target_share'] = merged['target_share'].fillna(0.0)
-        merged['rush_share'] = merged['rush_share'].fillna(0.0)
-        
-        return merged
+        # Vectorized share calc
+        for share, num, den in [
+            ('target_share', 'targets', 'pass_attempts_team'),
+            ('rush_share', 'rush_attempts', 'rush_attempts_team')
+        ]:
+            merged[share] = np.where(
+                merged[den] > 0, merged[num] / merged[den], 0.0
+            ) 
+            
+        return merged.fillna({'target_share': 0.0, 'rush_share': 0.0})
 
     @staticmethod
-    def calculate_red_zone_share(player_df: pd.DataFrame, team_stats_df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Calculates Red Zone Opportunity Share:
-        (Player RZ Targets + Player RZ Rushes) / (Team RZ Pass Attempts + Team RZ Rush Attempts)
-        """
-        # We need team RZ stats. If team_stats_df doesn't have them aggregated yet, 
-        # we might need to aggregate from player stats or assume they are passed in.
-        # Currently TeamGameOffenseStats doesn't have RZ columns, but we can aggregate from players.
+    def add_rz_share(df: pd.DataFrame, team_stats: pd.DataFrame = None) -> pd.DataFrame:
+        """Red Zone opportunity share."""
+        # Aggregate team RZ opportunities on the fly from player data
+        # (Assuming team_stats doesn't have it yet)
+        rz_cols = ['red_zone_pass_attempts', 'red_zone_rush_attempts', 'red_zone_targets']
         
-        # For now, let's assume we aggregate team RZ stats from the player_df itself 
-        # since we just ingested RZ stats into PlayerGameStats.
+        team_rz = df.groupby(['team', 'season', 'week'])[rz_cols].sum().reset_index()
+        team_rz['team_rz_ops'] = team_rz['red_zone_pass_attempts'] + team_rz['red_zone_rush_attempts']
         
-        # Group by Team/Season/Week to get Team RZ Totals
-        team_rz = player_df.groupby(['team', 'season', 'week'])[[
-            'red_zone_pass_attempts', 'red_zone_rush_attempts', 'red_zone_targets'
-        ]].sum().reset_index()
-        
-        team_rz['team_rz_opportunities'] = team_rz['red_zone_pass_attempts'] + team_rz['red_zone_rush_attempts']
-        
-        # Merge back to player DF
-        merged = pd.merge(
-            player_df,
-            team_rz[['team', 'season', 'week', 'team_rz_opportunities']],
-            on=['team', 'season', 'week'],
-            how='left'
+        merged = df.merge(
+            team_rz[['team', 'season', 'week', 'team_rz_ops']],
+            on=['team', 'season', 'week'], how='left'
         )
         
         player_ops = merged['red_zone_targets'] + merged['red_zone_rush_attempts']
-        
         merged['red_zone_share'] = np.where(
-            merged['team_rz_opportunities'] > 0,
-            player_ops / merged['team_rz_opportunities'],
-            0.0
+            merged['team_rz_ops'] > 0, player_ops / merged['team_rz_ops'], 0.0
         )
-        
-        merged['red_zone_share'] = merged['red_zone_share'].fillna(0.0)
-        return merged
+        return merged.fillna({'red_zone_share': 0.0})
 
     @staticmethod
-    def calculate_opportunity_share(player_df: pd.DataFrame, team_stats_df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Calculates Overall Opportunity Share:
-        (Player Targets + Player Rush Attempts) / (Team Pass Attempts + Team Rush Attempts)
-        """
-        # Merge if not already merged (or re-merge to be safe)
-        merged = pd.merge(
-            player_df,
-            team_stats_df[['team_name', 'season', 'week', 'pass_attempts', 'rush_attempts']],
+    def add_opp_share(df: pd.DataFrame, team_stats: pd.DataFrame) -> pd.DataFrame:
+        """Overall opportunity share (Types + Rushes) / Team Plays."""
+        cols = ['team_name', 'season', 'week', 'pass_attempts', 'rush_attempts']
+        merged = df.merge(
+            team_stats[cols],
             left_on=['team', 'season', 'week'],
             right_on=['team_name', 'season', 'week'],
-            how='left',
-            suffixes=('', '_team_opp')
+            how='left', suffixes=('', '_tm')
         )
         
-        team_plays = merged['pass_attempts_team_opp'] + merged['rush_attempts_team_opp']
+        total_plays = merged['pass_attempts_tm'] + merged['rush_attempts_tm']
         player_ops = merged['targets'] + merged['rush_attempts']
         
         merged['opportunity_share'] = np.where(
-            team_plays > 0,
-            player_ops / team_plays,
-            0.0
+            total_plays > 0, player_ops / total_plays, 0.0
         )
-        
-        merged['opportunity_share'] = merged['opportunity_share'].fillna(0.0)
-        return merged
+        return merged.fillna({'opportunity_share': 0.0})
 
     @staticmethod
-    def calculate_implied_totals(df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Calculates implied team total from Vegas lines.
-        Formula: (OverUnder / 2) - (Spread / 2) if favorite, else + (Spread / 2)
-        
-        Requires columns: 'vegas_total', 'vegas_spread', 'is_favorite'
-        """
-        if 'vegas_total' not in df.columns or 'vegas_spread' not in df.columns:
-            df['implied_team_total'] = 0.0 # Default if missing
+    def add_vegas_implied(df: pd.DataFrame) -> pd.DataFrame:
+        """(Total/2) - (Spread/2)."""
+        if 'vegas_total' not in df or 'vegas_spread' not in df:
+            df['implied_team_total'] = 0.0
             return df
             
-        # Assuming spread is negative for favorite (e.g., -3.5)
-        # Favorite Total = (Total / 2) + (Abs(Spread) / 2) -> Wait, standard is (Total/2) - (Spread/2) where spread is negative?
-        # Let's use standard logic:
-        # Favorite (-X): (Total + X) / 2  (e.g. 50, -10 -> (50+10)/2 = 30)
-        # Underdog (+X): (Total - X) / 2  (e.g. 50, +10 -> (50-10)/2 = 20)
-        
-        # If spread is always relative to "this team":
-        # If spread is -3.5 (Favorite), Total 40 -> (40 - (-3.5))/2 = 21.75
-        # If spread is +3.5 (Underdog), Total 40 -> (40 - 3.5)/2 = 18.25
-        
+        # Standard: spread is negative for favorite (e.g. -3.5)
+        # Fav implied: (Total - (-3.5)) / 2  ?? No
+        # Fav implied: (Total / 2) - (Spread / 2) -> (25) - (-1.75) = 26.75
         df['implied_team_total'] = (df['vegas_total'] - df['vegas_spread']) / 2
         return df
 
     @staticmethod
-    def calculate_game_script_features(df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Calculates features related to Game Script based on Vegas Spread.
-        Negative spread = Favorite (likely to lead -> run more).
-        Positive spread = Underdog (likely to trail -> pass more).
-        """
-        if 'vegas_spread' not in df.columns:
-            df['vegas_spread'] = 0.0
+    def add_game_script_features(df: pd.DataFrame) -> pd.DataFrame:
+        if 'vegas_spread' not in df: 
+            return df.assign(spread_passing_interaction=0.0, spread_rushing_interaction=0.0)
             
-        # 1. Spread Impact on Passing (Interaction)
-        # Hypothesis: If Underdog (Spread > 0) AND High Passing Volume (EMA), Passing should explode.
-        # If Favorite (Spread < 0), Passing might be capped.
-        if 'passing_yards_ema_4' in df.columns:
-            df['spread_passing_interaction'] = df['vegas_spread'] * df['passing_yards_ema_4']
-        else:
-            df['spread_passing_interaction'] = 0.0
-            
-        # 2. Spread Impact on Rushing (Interaction)
-        # Hypothesis: If Favorite (Spread < 0) AND High Rushing Volume, Rushing should explode.
-        # Note: Spread is negative for favorites, so we might want to invert it for clarity or just let model learn.
-        if 'rushing_yards_ema_4' in df.columns:
-            # Multiply by -1 * spread so that "Strong Favorite" (e.g. -10) becomes positive (10)
-            df['spread_rushing_interaction'] = -1 * df['vegas_spread'] * df['rushing_yards_ema_4']
-        else:
-            df['spread_rushing_interaction'] = 0.0
-            
+        # Interaction terms
+        # If underdog (spread > 0), passing volume might scale up
+        pass_ema = df.get('passing_yards_ema_4', 0)
+        rush_ema = df.get('rushing_yards_ema_4', 0)
+        
+        df['spread_passing_interaction'] = df['vegas_spread'] * pass_ema
+        # If favorite (spread < 0), rushing scales up. Invert spread so favorability is positive
+        df['spread_rushing_interaction'] = -1 * df['vegas_spread'] * rush_ema
         return df
 
     @staticmethod
-    def calculate_velocity(df: pd.DataFrame, metric: str = 'fantasy_points_ppr', short_span: int = 2, long_span: int = 8) -> pd.DataFrame:
-        """
-        Calculates 'Velocity of Change' (Delta): Difference between short-term and long-term EMA.
-        Positive delta = trending up.
-        """
-        df = df.sort_values(by=['player_id', 'season', 'week'])
+    def add_weather_impact(df: pd.DataFrame) -> pd.DataFrame:
+        """Position-specific weather penalties/boosts."""
+        # Defaults
+        for c in ['forecast_wind_speed', 'forecast_temp_low', 'forecast_humidity']:
+            if c not in df: df[c] = 0.0
+            
+        pos = df.get('position', 'UNK')
+        wind = df['forecast_wind_speed'].fillna(0)
         
-        short_ema = df.groupby('player_id')[metric].transform(
-            lambda x: x.ewm(span=short_span, adjust=False).mean().shift(1)
-        )
-        long_ema = df.groupby('player_id')[metric].transform(
-            lambda x: x.ewm(span=long_span, adjust=False).mean().shift(1)
+        # Penalties/Boosts
+        # Passers hate wind
+        df['weather_wind_passing_penalty'] = np.where(
+            pos.isin(['QB', 'WR', 'TE']),
+            (wind / 15.0).clip(0, 2), 0.0
         )
         
-        df[f'{metric}_velocity'] = short_ema - long_ema
-        df[f'{metric}_velocity'] = df[f'{metric}_velocity'].fillna(0.0)
-        
-        return df
-
-    @staticmethod
-    def calculate_consecutive_streaks(df: pd.DataFrame, metric: str = 'fantasy_points_ppr', threshold: float = 15.0) -> pd.DataFrame:
-        """
-        Calculates the number of consecutive games where the metric >= threshold.
-        """
-        df = df.sort_values(by=['player_id', 'season', 'week'])
-        
-        # Create a boolean series for the condition
-        condition = df[metric] >= threshold
-        
-        # Group by player and calculate streak
-        # Logic: Compare current row with previous to identify streak breaks
-        # shift(1) to use *previous* games for prediction (we don't know if they hit 15 today yet)
-        # Wait, streak entering the game is based on *past* games.
-        
-        def get_streak(series):
-            # Series of booleans
-            # We want the streak *entering* the current index.
-            # So we shift first.
-            shifted = series.shift(1).fillna(False)
-            
-            streaks = []
-            current_streak = 0
-            for val in shifted:
-                if val:
-                    current_streak += 1
-                else:
-                    current_streak = 0
-                streaks.append(current_streak)
-            return pd.Series(streaks, index=series.index)
-
-        # Use transform instead of apply to ensure alignment
-        # But transform works on Series, apply works on DataFrame/Series
-        # Let's iterate groups manually to be safe or use a different approach
-        
-        # Faster vectorized approach:
-        # 1. Identify where condition is False (streak breaks)
-        df[f'{metric}_streak_over_{int(threshold)}'] = df.groupby('player_id')[metric].transform(
-            lambda x: get_streak(x >= threshold)
+        # Rushers might benefit (game script shift)
+        df['weather_wind_rushing_boost'] = np.where(
+            pos == 'RB',
+            ((wind - 10) / 10.0).clip(0, 1), 0.0
         )
         
-        return df
-
-    @staticmethod
-    def calculate_weather_features(df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Calculates position-specific weather features.
-        High wind affects passing (QB/WR/TE) more than rushing (RB).
-        Requires: 'forecast_wind_speed', 'forecast_temp_low', 'forecast_humidity', 'position'
-        """
-        # Ensure columns exist
-        for col in ['forecast_wind_speed', 'forecast_temp_low', 'forecast_humidity']:
-            if col not in df.columns:
-                df[col] = 0.0
-        
-        # Get position from player_id if not in df
-        if 'position' not in df.columns:
-            df['position'] = 'UNKNOWN'
-        
-        # 1. Position-Specific Wind Impact
-        # QB/WR/TE are negatively affected by high wind (less passing)
-        # RB is less affected or may benefit (more rushing)
-        df['wind_speed'] = df['forecast_wind_speed'].fillna(0)
-        
-        # Passing positions (QB, WR, TE) - negative impact from wind
-        df['weather_wind_passing_penalty'] = 0.0
-        passing_positions = df['position'].isin(['QB', 'WR', 'TE'])
-        df.loc[passing_positions, 'weather_wind_passing_penalty'] = (
-            df.loc[passing_positions, 'wind_speed'] / 15.0  # Normalize to 0-2 range
-        ).clip(0, 2)
-        
-        # Rushing positions (RB) - potential benefit from wind (more rushing attempts)
-        df['weather_wind_rushing_boost'] = 0.0
-        rushing_positions = df['position'] == 'RB'
-        df.loc[rushing_positions, 'weather_wind_rushing_boost'] = (
-            (df.loc[rushing_positions, 'wind_speed'] - 10) / 10.0  # Boost starts at 10mph
-        ).clip(0, 1)
-        
-        # 2. Extreme Temperature (affects all positions)
-        df['weather_temp_extreme'] = (
-            (df['forecast_temp_low'] < 32) | (df['forecast_temp_low'] > 90)
-        ).astype(float)
-        
-        # 3. High Humidity (affects ball grip, all positions)
-        df['weather_high_humidity'] = (
-            df['forecast_humidity'] > 70
-        ).astype(float)
+        df['weather_temp_extreme'] = ((df['forecast_temp_low'] < 32) | (df['forecast_temp_low'] > 90)).astype(float)
+        df['weather_high_humidity'] = (df['forecast_humidity'] > 70).astype(float)
         
         return df
 
     @staticmethod
-    def calculate_fantasy_context_features(df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Calculates features based on historical fantasy context (VORP, PPG trends).
-        Requires: 'vorp_last_season', 'ppg_last_season', 'fantasy_points_ppr_ema_4'
-        """
-        # Ensure columns exist
-        for col in ['vorp_last_season', 'ppg_last_season']:
-            if col not in df.columns:
-                df[col] = 0.0
-                
-        # 1. VORP Last Season (Direct) - already in vorp_last_season
+    def add_fantasy_context(df: pd.DataFrame) -> pd.DataFrame:
+        """VORP and PPG trends."""
+        # Defaults
+        for c in ['vorp_last_season', 'ppg_last_season']:
+            if c not in df: df[c] = 0.0
+            
+        # PPG Trend
+        curr = df.get('fantasy_points_ppr_ema_4', 0)
+        df['player_ppg_trend'] = curr - df['ppg_last_season']
         
-        # 2. PPG Trend (Current EMA - Last Season PPG)
-        # Are they overperforming or underperforming their baseline?
-        if 'fantasy_points_ppr_ema_4' in df.columns:
-            df['player_ppg_trend'] = df['fantasy_points_ppr_ema_4'] - df['ppg_last_season']
-        else:
-            df['player_ppg_trend'] = 0.0
+        # Binning helper
+        def bin_col(col, bins):
+            return pd.cut(col, bins=[-float('inf')] + bins + [float('inf')], labels=[0, 1, 2, 3]).fillna(1.0).astype(float)
         
-        # 3. VORP Tier (Categorical bins based on analysis)
-        # Bottom 25%: < -99, Q2: -99 to -52, Q3: -52 to 7, Top 25%: > 7
-        df['vorp_tier'] = pd.cut(
-            df['vorp_last_season'],
-            bins=[-float('inf'), -99, -52, 7, float('inf')],
-            labels=[0, 1, 2, 3]  # 0=Bottom, 3=Top
-        ).astype(float)
-        df['vorp_tier'] = df['vorp_tier'].fillna(1.0)  # Default to Q2
-        
-        # 4. PPG Tier (Categorical bins based on analysis)
-        # Bottom 25%: < 4, Q2: 4 to 8.7, Q3: 8.7 to 13.7, Top 25%: > 13.7
-        df['ppg_tier'] = pd.cut(
-            df['ppg_last_season'],
-            bins=[-float('inf'), 4, 8.7, 13.7, float('inf')],
-            labels=[0, 1, 2, 3]  # 0=Bottom, 3=Top
-        ).astype(float)
-        df['ppg_tier'] = df['ppg_tier'].fillna(1.0)  # Default to Q2
-        
-        # 5. PPG Squared (Non-linear relationship)
+        df['vorp_tier'] = bin_col(df['vorp_last_season'], [-99, -52, 7])
+        df['ppg_tier'] = bin_col(df['ppg_last_season'], [4, 8.7, 13.7])
         df['ppg_last_season_squared'] = df['ppg_last_season'] ** 2
         
         return df
-
+    
     @staticmethod
-    def calculate_expected_fantasy_points(df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Calculates Expected Fantasy Points (xFP) based on opportunity volume.
-        Uses a simple Linear Regression to weight Targets, Rushes, and Red Zone opportunities.
-        Also calculates xFP_diff (Actual - Expected) to measure efficiency (FPOE).
-        """
+    def add_xfp(df: pd.DataFrame) -> pd.DataFrame:
+        """Expected Fantasy Points model."""
         from sklearn.linear_model import LinearRegression
         
-        # Features for xFP
-        features = ['targets', 'rush_attempts', 'red_zone_targets', 'red_zone_rush_attempts']
+        feats = ['targets', 'rush_attempts', 'red_zone_targets', 'red_zone_rush_attempts']
         target = 'fantasy_points_ppr'
         
-        # Ensure columns exist
-        for col in features:
-            if col not in df.columns:
-                df[col] = 0.0
-        
-        # Filter for training data (rows with actual points)
-        train_mask = (df[target].notna()) & (df[target] != 0)
-        
-        if train_mask.sum() > 100: # Only train if we have enough data
-            X = df.loc[train_mask, features].fillna(0)
-            y = df.loc[train_mask, target].fillna(0)
+        # Ensure cols
+        for f in feats: 
+            if f not in df: df[f] = 0.0
             
-            model = LinearRegression()
-            model.fit(X, y)
-            
-            # Apply to all rows
-            # Fill NaNs in features for prediction as well
-            df['xFP'] = model.predict(df[features].fillna(0))
+        # Train on non-nulls
+        mask = df[target].notna() & (df[target] != 0)
+        
+        if mask.sum() > 100:
+            X = df.loc[mask, feats].fillna(0)
+            y = df.loc[mask, target].fillna(0)
+            model = LinearRegression().fit(X, y)
+            df['xFP'] = model.predict(df[feats].fillna(0))
         else:
             # Fallback coefficients
             df['xFP'] = (
@@ -420,23 +231,37 @@ class FeatureEngineering:
                 df['red_zone_rush_attempts'] * 1.5
             )
             
-        # Calculate Efficiency (FPOE)
-        actual_points = df[target].fillna(0)
-        df['xFP_diff'] = actual_points - df['xFP']
-        
+        df['xFP_diff'] = df.get(target, 0) - df['xFP']
         return df
 
     @staticmethod
-    def calculate_opponent_defense_features(df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Placeholder for opponent defense features.
-        Actual calculation happens in training/prediction pipeline with defense_stats.
-        """
-        # Ensure columns exist with defaults
-        for col in ['opp_def_ppg_allowed', 'opp_def_ypg_allowed', 
-                    'opp_def_sacks_per_game', 'opp_def_turnovers_per_game',
-                    'opp_def_strength_score']:
-            if col not in df.columns:
-                df[col] = 0.0
+    def add_def_features(df: pd.DataFrame) -> pd.DataFrame:
+        # Placeholder for opponent stats join
+        defaults = [
+            'opp_def_ppg_allowed', 'opp_def_ypg_allowed', 
+            'opp_def_sacks_per_game', 'opp_def_turnovers_per_game',
+            'opp_def_strength_score'
+        ]
+        for c in defaults:
+            if c not in df: df[c] = 0.0
+        return df
+
+    @staticmethod
+    def add_streaks(df: pd.DataFrame, metric='fantasy_points_ppr', threshold=15.0) -> pd.DataFrame:
+        """Consecutive games over threshold."""
+        df = df.sort_values(['player_id', 'season', 'week'])
         
+        def _streak_calc(s):
+            # Shift 1 to use entering stats
+            shifted = s.shift(1).fillna(False)
+            # Group by change in boolean value to identify blocks
+            # But we want *cumulative* streak.
+            # Fast vectorized approach for cumulative streaks of True:
+            # Reset sum at False
+            y = shifted.astype(int)
+            return y * (y.groupby((y != y.shift()).cumsum()).cumcount() + 1)
+            
+        df[f'{metric}_streak_over_{int(threshold)}'] = df.groupby('player_id')[metric].transform(
+            lambda x: _streak_calc(x >= threshold)
+        )
         return df

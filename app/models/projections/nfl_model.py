@@ -30,26 +30,21 @@ class NFLProjectionModel(BaseProjectionModel):
         
         # 1. Advanced Features (if team stats available)
         if team_stats is not None:
-            df = FeatureEngineering.calculate_team_shares(df, team_stats)
-            df = FeatureEngineering.calculate_red_zone_share(df, team_stats)
-            df = FeatureEngineering.calculate_opportunity_share(df, team_stats)
+            df = FeatureEngineering.add_team_shares(df, team_stats)
+            df = FeatureEngineering.add_rz_share(df, team_stats)
+            df = FeatureEngineering.add_opp_share(df, team_stats)
             
-        # 2. Time Series Features
-        # EMAs
-        ema_cols = ['fantasy_points_ppr', 'targets', 'rush_attempts', 'red_zone_share', 'opportunity_share']
-        df = FeatureEngineering.calculate_exponential_moving_averages(df, span=4, columns=ema_cols)
+        ema = ['fantasy_points_ppr', 'targets', 'rush_attempts', 'red_zone_share', 'opportunity_share']
+        df = FeatureEngineering.add_emas(df, span=4, cols=ema)
         
-        # Lags
-        lag_cols = ['fantasy_points_ppr', 'targets', 'rush_attempts']
-        df = FeatureEngineering.calculate_lag_features(df, lags=[1], columns=lag_cols)
+        lag = ['fantasy_points_ppr', 'targets', 'rush_attempts']
+        df = FeatureEngineering.add_lags(df, lags=[1], cols=lag)
         
-        # Streaks & Velocity
-        df = FeatureEngineering.calculate_streak_coefficient(df)
-        df = FeatureEngineering.calculate_velocity(df)
-        df = FeatureEngineering.calculate_consecutive_streaks(df)
+        df = FeatureEngineering.calc_streak(df)
+        df = FeatureEngineering.calc_velocity(df)
+        df = FeatureEngineering.add_streaks(df)
         
-        # 3. Implied Totals (if available)
-        df = FeatureEngineering.calculate_implied_totals(df)
+        df = FeatureEngineering.add_vegas_implied(df)
         
         # 4. Define Feature List
         feature_cols = [
