@@ -34,9 +34,9 @@ class CSVIngestion:
             # 2. Process each row
             projections_added = 0
             
-            # Get or create a dummy slate for this import (simplified for MVP)
+            # Get or create a dummy slate for this import
             # In a real app, user would select the slate ID from the frontend
-            slate = self.db.query(Slate).filter(Slate.sport_id == 1).first() # Assuming 1 is NFL for now
+            slate = self.db.query(Slate).filter(Slate.sport_id == 1).first() 
             if not slate:
                 logger.warning("No slate found, skipping projection save")
                 return 0
@@ -45,11 +45,7 @@ class CSVIngestion:
                 player_name = row['name']
                 points = row['points']
                 
-                # Find player by name (fuzzy match or exact)
-                # MVP: Exact match on "First Last"
-                # In production: Use fuzzywuzzy or similar
-                
-                # Split name to find player
+                # Find player by name
                 parts = player_name.split()
                 if len(parts) < 2:
                     continue

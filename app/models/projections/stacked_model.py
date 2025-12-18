@@ -93,10 +93,7 @@ class StackedEnsembleModel(BaseProjectionModel):
         
         logger.info(f"Stacked Model Meta-MAE: {mae:.2f}")
         
-        # 5. Retrain Base Models on Full Data?
-        # Ideally yes, but for this MVP we'll skip to save time and avoid leakage issues if we don't do it carefully.
-        # The base models are trained on 50% of data.
-        
+        # 5. Return weights
         return {"mae": mae, "weights": dict(zip(meta_features.columns, self.meta_learner.coef_))}
 
     def predict(self, data: pd.DataFrame, team_stats: pd.DataFrame = None) -> pd.Series:

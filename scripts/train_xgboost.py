@@ -206,19 +206,13 @@ def main():
         overfitting_ratio = test_mae / train_mae if train_mae > 0 else 1.0
         
         logger.info(f"Training Complete. Metrics: {metrics}")
-        logger.info(f"\n=== OVERFITTING ANALYSIS ===")
-        logger.info(f"Train MAE: {train_mae:.4f}")
-        logger.info(f"Test MAE: {test_mae:.4f}")
-        logger.info(f"Overfitting Gap: {overfitting_gap:.4f} ({100*overfitting_gap/test_mae:.1f}% of test MAE)")
-        logger.info(f"Overfitting Ratio: {overfitting_ratio:.3f} (ideal: ~1.0, concerning: >1.15)")
+        logger.info(f"Overfitting Analysis - Train MAE: {train_mae:.4f}, Test MAE: {test_mae:.4f}")
+        logger.info(f"Gap: {overfitting_gap:.4f}, Ratio: {overfitting_ratio:.3f}")
         
         if overfitting_ratio > 1.15:
-            logger.warning("⚠️  Model is overfitting! Consider:")
-            logger.warning("   - Reducing max_depth")
-            logger.warning("   - Increasing min_child_weight")
-            logger.warning("   - Adding regularization (reg_alpha, reg_lambda)")
+            logger.warning("Model showing signs of overfitting (>1.15 ratio). Review hyperparameters.")
         elif overfitting_ratio < 1.05:
-            logger.info("✅ Model generalization is good!")
+            logger.info("Model generalization is acceptable.")
         
         # Save Model
         logger.info("Saving model...")

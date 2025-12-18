@@ -63,11 +63,9 @@ def ingest_pbp_data(year: int = 2025):
     logger.info(f"Found {len(plays)} valid plays.")
     
     # Cache Players: GSIS ID -> Player ID
-    # And (Name, Team) -> Player ID as fallback
     logger.info("Caching player map...")
     players = db.query(Player).all()
     gsis_map = {}
-    name_team_map = {} # (FIRST LAST, TEAM) -> ID
     f_last_map = {} # (F.Lastname, TEAM) -> ID
     
     for p in players:
@@ -77,16 +75,11 @@ def ingest_pbp_data(year: int = 2025):
             if gsis:
                 gsis_map[gsis] = p.id
         
-        if p.team:
-            # Full Name Map
-            key = (f"{p.first_name} {p.last_name}".upper(), p.team.abbreviation)
-            name_team_map[key] = p.id
-            
-            # F.Lastname Map
-            if p.first_name and p.last_name:
-                f_last = f"{p.first_name[0]}.{p.last_name}".upper()
-                key_f = (f_last, p.team.abbreviation)
-                f_last_map[key_f] = p.id
+        if p.team and p.first_name and p.last_name:
+            # F.Lastname Map for common NFLverse format
+            f_last = f"{p.first_name[0]}.{p.last_name}".upper()
+            key_f = (f_last, p.team.abbreviation)
+            f_last_map[key_f] = p.id
 
     # Cache Games: (Season, Week, Home, Away) -> Game ID
     logger.info("Caching game map...")
@@ -103,9 +96,7 @@ def ingest_pbp_data(year: int = 2025):
     team_id_map = {t.abbreviation: t.id for t in teams}
 
     # Aggregate Stats
-    # Key: (GameID, PlayerID) -> Stats Dict
     player_game_stats = {}
-    # Key: (GameID, TeamAbbr) -> Stats Dict
     team_game_stats = {}
     
     # Helper to get/create stats entry
@@ -132,26 +123,14 @@ def ingest_pbp_data(year: int = 2025):
 
     # Helper to resolve player
     def resolve_player(nfl_id, nfl_name, nfl_team):
-        # Try GSIS ID
         if nfl_id in gsis_map:
             return gsis_map[nfl_id]
         
-        # Try Name + Team
         db_team = get_db_team_abbr(nfl_team)
         if nfl_name and db_team:
-            # NFLverse 'passer' is usually 'J.Allen'
             key = (nfl_name.upper(), db_team)
             if key in f_last_map:
                 return f_last_map[key]
-                
-            # Try exact match just in case
-            if key in name_team_map:
-                return name_team_map[key]
-            
-            # Log failure for debugging (sample)
-            if "DANIELS" in nfl_name.upper():
-                logger.warning(f"Failed to resolve {nfl_name} ({nfl_team}) -> Key: {key}. Available keys sample: {list(f_last_map.keys())[:5]}")
-                
         return None
 
     processed_plays = 0
